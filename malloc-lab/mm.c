@@ -34,6 +34,11 @@ team_t team = {
     /* Second member's email address (leave blank if none) */
     ""};
 
+/* Basic constants and macros */
+#define WSIZE       4           /* Word and header/footer size  (bytes) */
+#define DSIZE       8           /* Double word size (bytes) */
+#define CHUNKSIZE   (1<<12)     /* Extend heap by this amount (bytes)   */
+
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
 
