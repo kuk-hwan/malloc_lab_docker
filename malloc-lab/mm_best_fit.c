@@ -1,5 +1,5 @@
 /*
- * mm.c - Implicit Free List + Next Fit
+ * mm.c - Implicit Free List + Best Fit
  */
 
 #include <stdio.h>
@@ -46,19 +46,6 @@ team_t team = {
 
 static char *heap_listp = NULL;
 
-static size_t find_fit_calls = 0;
-static size_t find_fit_checks = 0;
-static size_t sbrk_calls = 0;
-
-static int stats_registered = 0;
-static void mm_print_stats(void);
-
-
-/*
- * Next Fit에서 마지막 탐색 위치를 기억한다.
- */
-static char *rover = NULL;
-
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
@@ -70,20 +57,8 @@ static void place(void *bp, size_t asize);
  */
 int mm_init(void)
 {
-    find_fit_calls = 0;
-    find_fit_checks = 0;
-    sbrk_calls = 0;
-
-    if (!stats_registered)
-    {
-        atexit(mm_print_stats);
-        stats_registered = 1;
-    }
-
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
-
-    sbrk_calls++;
 
     PUT(heap_listp, 0);
     PUT(heap_listp + WSIZE, PACK(DSIZE, 1));
@@ -91,11 +66,6 @@ int mm_init(void)
     PUT(heap_listp + 3 * WSIZE, PACK(0, 1));
 
     heap_listp += 2 * WSIZE;
-
-    /*
-     * Next Fit의 최초 탐색 위치.
-     */
-    rover = heap_listp;
 
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -119,8 +89,6 @@ static void *extend_heap(size_t words)
     if ((bp = mem_sbrk(size)) == (void *)-1)
         return NULL;
 
-    sbrk_calls++;
-
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
 
@@ -143,17 +111,11 @@ static void *coalesce(void *bp)
     next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size = GET_SIZE(HDRP(bp));
 
-    /*
-     * Case 1
-     */
     if (prev_alloc && next_alloc)
     {
         return bp;
     }
 
-    /*
-     * Case 2
-     */
     else if (prev_alloc && !next_alloc)
     {
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
@@ -162,9 +124,6 @@ static void *coalesce(void *bp)
         PUT(FTRP(bp), PACK(size, 0));
     }
 
-    /*
-     * Case 3
-     */
     else if (!prev_alloc && next_alloc)
     {
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
@@ -175,9 +134,6 @@ static void *coalesce(void *bp)
         bp = PREV_BLKP(bp);
     }
 
-    /*
-     * Case 4
-     */
     else
     {
         size += GET_SIZE(HDRP(PREV_BLKP(bp)))
@@ -189,65 +145,48 @@ static void *coalesce(void *bp)
         bp = PREV_BLKP(bp);
     }
 
-    /*
-     * coalesce 때문에 rover가 합쳐져 사라진 블록 내부를
-     * 가리키게 되는 경우, 새 free block의 시작으로 옮긴다.
-     */
-    if (rover > (char *)bp &&
-        rover < (char *)NEXT_BLKP(bp))
-    {
-        rover = bp;
-    }
-
     return bp;
 }
 
 
 /*
- * find_fit - Next Fit
+ * find_fit - Best Fit
  *
- * 지난번 검색 위치부터 heap 끝까지 탐색한다.
- * 없으면 heap 처음으로 돌아가서
- * 원래 검색 위치까지 탐색한다.
+ * 전체 heap을 검색해서
+ * 요청 크기를 만족하는 free block 중
+ * 가장 작은 block을 선택한다.
  */
 static void *find_fit(size_t asize)
 {
-    find_fit_calls++;
-    char *oldrover;
+    void *bp;
+    void *best_bp = NULL;
+    size_t best_size = (size_t)-1;
 
-    oldrover = rover;
-
-    /*
-     * 1. 현재 rover부터 heap 끝까지.
-     */
-    for (;
-         GET_SIZE(HDRP(rover)) > 0;
-         rover = NEXT_BLKP(rover))
+    for (bp = heap_listp;
+         GET_SIZE(HDRP(bp)) > 0;
+         bp = NEXT_BLKP(bp))
     {
-        find_fit_checks++;
-        if (!GET_ALLOC(HDRP(rover)) &&
-            GET_SIZE(HDRP(rover)) >= asize)
+        if (!GET_ALLOC(HDRP(bp)) &&
+            GET_SIZE(HDRP(bp)) >= asize)
         {
-            return rover;
+            size_t block_size = GET_SIZE(HDRP(bp));
+
+            if (block_size < best_size)
+            {
+                best_size = block_size;
+                best_bp = bp;
+            }
+
+            /*
+             * 정확히 같은 크기를 찾았다면
+             * 더 좋은 후보가 없으므로 즉시 반환.
+             */
+            if (block_size == asize)
+                return bp;
         }
     }
 
-    /*
-     * 2. heap 처음부터 기존 rover 위치까지.
-     */
-    for (rover = heap_listp;
-         rover < oldrover;
-         rover = NEXT_BLKP(rover))
-    {
-        find_fit_checks++;
-        if (!GET_ALLOC(HDRP(rover)) &&
-            GET_SIZE(HDRP(rover)) >= asize)
-        {
-            return rover;
-        }
-    }
-
-    return NULL;
+    return best_bp;
 }
 
 
@@ -360,21 +299,4 @@ void *mm_realloc(void *ptr, size_t size)
     mm_free(ptr);
 
     return newptr;
-}
-
-
-static void mm_print_stats(void)
-{
-    printf("\n=== Allocator Stats ===\n");
-    printf("find_fit calls      : %zu\n", find_fit_calls);
-    printf("find_fit checks     : %zu\n", find_fit_checks);
-
-    if (find_fit_calls > 0)
-    {
-        printf("avg checks per call : %.2f\n",
-               (double)find_fit_checks / find_fit_calls);
-    }
-
-    printf("mem_sbrk calls      : %zu\n", sbrk_calls);
-    printf("heap size           : %zu bytes\n", mem_heapsize());
 }

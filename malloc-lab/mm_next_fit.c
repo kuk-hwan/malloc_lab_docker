@@ -46,14 +46,6 @@ team_t team = {
 
 static char *heap_listp = NULL;
 
-static size_t find_fit_calls = 0;
-static size_t find_fit_checks = 0;
-static size_t sbrk_calls = 0;
-
-static int stats_registered = 0;
-static void mm_print_stats(void);
-
-
 /*
  * Next Fit에서 마지막 탐색 위치를 기억한다.
  */
@@ -70,20 +62,8 @@ static void place(void *bp, size_t asize);
  */
 int mm_init(void)
 {
-    find_fit_calls = 0;
-    find_fit_checks = 0;
-    sbrk_calls = 0;
-
-    if (!stats_registered)
-    {
-        atexit(mm_print_stats);
-        stats_registered = 1;
-    }
-
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
-
-    sbrk_calls++;
 
     PUT(heap_listp, 0);
     PUT(heap_listp + WSIZE, PACK(DSIZE, 1));
@@ -118,8 +98,6 @@ static void *extend_heap(size_t words)
 
     if ((bp = mem_sbrk(size)) == (void *)-1)
         return NULL;
-
-    sbrk_calls++;
 
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
@@ -212,7 +190,6 @@ static void *coalesce(void *bp)
  */
 static void *find_fit(size_t asize)
 {
-    find_fit_calls++;
     char *oldrover;
 
     oldrover = rover;
@@ -224,7 +201,6 @@ static void *find_fit(size_t asize)
          GET_SIZE(HDRP(rover)) > 0;
          rover = NEXT_BLKP(rover))
     {
-        find_fit_checks++;
         if (!GET_ALLOC(HDRP(rover)) &&
             GET_SIZE(HDRP(rover)) >= asize)
         {
@@ -239,7 +215,6 @@ static void *find_fit(size_t asize)
          rover < oldrover;
          rover = NEXT_BLKP(rover))
     {
-        find_fit_checks++;
         if (!GET_ALLOC(HDRP(rover)) &&
             GET_SIZE(HDRP(rover)) >= asize)
         {
@@ -360,21 +335,4 @@ void *mm_realloc(void *ptr, size_t size)
     mm_free(ptr);
 
     return newptr;
-}
-
-
-static void mm_print_stats(void)
-{
-    printf("\n=== Allocator Stats ===\n");
-    printf("find_fit calls      : %zu\n", find_fit_calls);
-    printf("find_fit checks     : %zu\n", find_fit_checks);
-
-    if (find_fit_calls > 0)
-    {
-        printf("avg checks per call : %.2f\n",
-               (double)find_fit_checks / find_fit_calls);
-    }
-
-    printf("mem_sbrk calls      : %zu\n", sbrk_calls);
-    printf("heap size           : %zu bytes\n", mem_heapsize());
 }
